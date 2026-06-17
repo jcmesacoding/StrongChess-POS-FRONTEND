@@ -10,9 +10,19 @@ const { t } = useI18n();
 const customers = ref([]);
 const search = ref("");
 const showModal = ref(false);
+const showDeleteModal = ref(false);
 const showToast = ref(false);
 const toastMessage = ref("");
 const toastType = ref("success");
+const isEditing = ref(false);
+const editingId = ref(null);
+const customerToDelete = ref(null);
+
+const form = ref({
+  firstname: '', middlename: '', lastname: '', surname: '',
+  socialReason: '', commercialName: '', email: '',
+  phoneNumber: '', documentNumber: '', address: ''
+})
 
 const triggerToast = (message, type = "success") => {
   toastMessage.value = message;
@@ -24,12 +34,8 @@ const triggerToast = (message, type = "success") => {
 const createCustomer = async (customer) => {
   try {
     await customerService.create({
-      documentTypeId: 1,
-      personTypeId: 1,
-      genderId: 1,
-      departmentId: 1,
-      provinceId: 1,
-      districtId: 1,
+      documentTypeId: 1, personTypeId: 1, genderId: 1,
+      departmentId: 1, provinceId: 1, districtId: 1,
       birthdate: "2000-01-01",
       registrationDate: new Date().toISOString(),
       ...customer
@@ -40,6 +46,71 @@ const createCustomer = async (customer) => {
   } catch (error) {
     console.error(error);
     triggerToast(t('customers.error_create'), "error");
+  }
+};
+
+const editCustomer = (customer) => {
+  isEditing.value = true;
+  editingId.value = customer.id;
+  form.value = {
+    firstname: customer.firstname || '',
+    middlename: customer.middlename || '',
+    lastname: customer.lastname || '',
+    surname: customer.surname || '',
+    socialReason: customer.socialReason || '',
+    commercialName: customer.commercialName || '',
+    email: customer.email || '',
+    phoneNumber: customer.phoneNumber || '',
+    documentNumber: customer.documentNumber || '',
+    address: customer.address || ''
+  }
+  showModal.value = true;
+};
+
+const saveCustomer = async (customer) => {
+  try {
+    if (isEditing.value) {
+      await customerService.update(editingId.value, {
+        documentTypeId: 1, personTypeId: 1, genderId: 1,
+        departmentId: 1, provinceId: 1, districtId: 1,
+        birthdate: "2000-01-01",
+        ...customer
+      });
+      triggerToast(t('customers.updated'), "success");
+    } else {
+      await customerService.create({
+        documentTypeId: 1, personTypeId: 1, genderId: 1,
+        departmentId: 1, provinceId: 1, districtId: 1,
+        birthdate: "2000-01-01",
+        registrationDate: new Date().toISOString(),
+        ...customer
+      });
+      triggerToast(t('customers.created'), "success");
+    }
+    await loadCustomers();
+    showModal.value = false;
+    isEditing.value = false;
+    editingId.value = null;
+  } catch (error) {
+    console.error(error);
+    triggerToast(t('customers.error_create'), "error");
+  }
+};
+
+const confirmDelete = (id) => {
+  customerToDelete.value = id;
+  showDeleteModal.value = true;
+};
+
+const deleteCustomer = async () => {
+  try {
+    await customerService.delete(customerToDelete.value);
+    await loadCustomers();
+    showDeleteModal.value = false;
+    triggerToast(t('customers.deleted'), "success");
+  } catch (error) {
+    console.error(error);
+    triggerToast(t('customers.error_delete'), "error");
   }
 };
 
@@ -71,7 +142,7 @@ onMounted(() => { loadCustomers(); });
         <h1 class="text-2xl lg:text-3xl font-bold text-[#213141]">{{ $t('customers.title') }}</h1>
         <p class="text-gray-600 text-sm lg:text-base">{{ $t('customers.subtitle') }}</p>
       </div>
-      <button @click="showModal = true"
+      <button @click="isEditing = false; showModal = true"
         class="px-3 py-2 lg:px-5 lg:py-3 rounded-xl text-white font-medium text-sm lg:text-base"
         style="background-color:#213141;">
         {{ $t('customers.add') }}
@@ -144,8 +215,8 @@ onMounted(() => { loadCustomers(); });
               </span>
             </td>
             <td class="px-6 py-4">
-              <button class="mr-3">✏️</button>
-              <button>🗑️</button>
+              <button class="mr-3" @click="editCustomer(customer)">✏️</button>
+              <button @click="confirmDelete(customer.id)">🗑️</button>
             </td>
           </tr>
         </tbody>
@@ -173,8 +244,8 @@ onMounted(() => { loadCustomers(); });
         <div class="flex justify-between items-center text-sm text-gray-600">
           <span>📞 {{ customer.phoneNumber || '-' }}</span>
           <div>
-            <button class="mr-3">✏️</button>
-            <button>🗑️</button>
+            <button class="mr-3" @click="editCustomer(customer)">✏️</button>
+            <button @click="confirmDelete(customer.id)">🗑️</button>
           </div>
         </div>
       </div>
@@ -182,7 +253,29 @@ onMounted(() => { loadCustomers(); });
 
   </div>
 
-  <CustomerModal v-if="showModal" @close="showModal = false" @save="createCustomer" />
+  <!-- Customer Modal -->
+  <CustomerModal
+    v-if="showModal"
+    :initial-data="isEditing ? form : null"
+    :is-editing="isEditing"
+    @close="showModal = false; isEditing = false"
+    @save="saveCustomer" />
+
+  <!-- Delete Modal -->
+  <div v-if="showDeleteModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
+    <div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
+      <h2 class="text-xl font-bold text-[#213141] mb-4">{{ $t('customers.delete_title') }}</h2>
+      <p class="text-gray-600 mb-6">{{ $t('customers.delete_confirm') }}</p>
+      <div class="flex justify-end gap-3">
+        <button @click="showDeleteModal = false" class="px-4 py-2 border rounded-lg text-sm">
+          {{ $t('common.cancel') }}
+        </button>
+        <button @click="deleteCustomer" class="px-4 py-2 bg-red-600 text-white rounded-lg text-sm">
+          {{ $t('common.delete') }}
+        </button>
+      </div>
+    </div>
+  </div>
 
   <Transition name="toast">
     <ToastNotification v-if="showToast" :message="toastMessage" :type="toastType" />

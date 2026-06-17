@@ -26,6 +26,8 @@ const toastMessage = ref("");
 const toastType = ref("success");
 const search = ref("");
 const showCart = ref(false);
+const showPartialModal = ref(false);
+const partialAmount = ref(0);
 const showInvoiceModal = ref(false);
 const currentInvoice = ref(null);
 
@@ -65,7 +67,7 @@ const removeItem = (productId) => {
   cart.value = cart.value.filter(item => item.productId !== productId);
 };
 
-const completeSale = async () => {
+const completeSale = async (paymentType = 'FULL') => {
   if (!customerId.value || !employeeId.value || !voucherTypeId.value) {
     triggerToast(t('sales.error_select'), "error");
     return;
@@ -74,12 +76,22 @@ const completeSale = async () => {
     triggerToast(t('sales.error_empty_cart'), "error");
     return;
   }
+
   try {
     const cartSnapshot = [...cart.value];
+    const cartTotal = cartSnapshot.reduce((sum, item) => sum + (item.salePrice * item.units) - item.discount, 0)
+
     const payload = {
       customerId: Number(customerId.value),
       employeeId: employeeId.value,
       voucherTypeId: Number(voucherTypeId.value),
+      creditSale: paymentType !== 'FULL',
+      initialPayment: paymentType === 'PARTIAL'
+        ? Number(partialAmount.value)
+        : paymentType === 'LATER'
+          ? 0
+          : cartTotal,
+      dueDate: null,
       details: cartSnapshot.map(item => ({
         productId: item.productId,
         units: item.units,
@@ -88,14 +100,10 @@ const completeSale = async () => {
       }))
     };
 
-    const response = await salesService.create(payload);
+    await salesService.create(payload);
     await loadSales();
 
-    // Buscar la venta recién creada para la factura
     const createdSale = sales.value[0]
-    const customer = customers.value.find(c => c.id === Number(customerId.value))
-    const employee = employees.value.find(e => e.id === employeeId.value)
-
     currentInvoice.value = {
       voucherSerie: createdSale?.voucherSerie || 'A01',
       voucherNumber: createdSale?.voucherNumber || '',
@@ -103,14 +111,18 @@ const completeSale = async () => {
       customerName: createdSale?.customerName || '',
       employeeName: createdSale?.employeeName || '',
       items: cartSnapshot,
-      total: cartSnapshot.reduce((sum, item) => sum + (item.salePrice * item.units) - item.discount, 0)
+      total: cartTotal,
+      paymentType,
+      partialAmount: paymentType === 'PARTIAL' ? Number(partialAmount.value) : null
     }
 
     cart.value = [];
     customerId.value = "";
     employeeId.value = "";
     voucherTypeId.value = "";
+    partialAmount.value = 0;
     showCart.value = false;
+    showPartialModal.value = false;
     showInvoiceModal.value = true;
 
   } catch (error) {
@@ -122,7 +134,6 @@ const viewInvoice = async (saleId) => {
   try {
     const response = await salesService.getById(saleId)
     const sale = response.data
-
     currentInvoice.value = {
       voucherSerie: sale.voucherSerie,
       voucherNumber: sale.voucherNumber,
@@ -137,7 +148,6 @@ const viewInvoice = async (saleId) => {
       })) || [],
       total: sale.total
     }
-
     showInvoiceModal.value = true
   } catch (error) {
     triggerToast("Error loading invoice", "error")
@@ -149,7 +159,6 @@ const downloadInvoicePDF = () => {
   const doc = new jsPDF()
   const inv = currentInvoice.value
 
-  // Header
   doc.setFontSize(20)
   doc.setTextColor(33, 49, 65)
   doc.text('StrongChess POS', 14, 20)
@@ -158,7 +167,6 @@ const downloadInvoicePDF = () => {
   doc.setTextColor(100)
   doc.text('INVOICE', 14, 30)
 
-  // Invoice details
   doc.setFontSize(10)
   doc.setTextColor(33, 49, 65)
   doc.text(`Invoice: ${inv.voucherSerie}-${inv.voucherNumber}`, 14, 42)
@@ -166,12 +174,10 @@ const downloadInvoicePDF = () => {
   doc.text(`Customer: ${inv.customerName}`, 14, 56)
   doc.text(`Employee: ${inv.employeeName}`, 14, 63)
 
-  // Line
   doc.setDrawColor(190, 241, 221)
   doc.setLineWidth(0.5)
   doc.line(14, 68, 196, 68)
 
-  // Items table
   autoTable(doc, {
     startY: 74,
     head: [['Product', 'Qty', 'Unit Price', 'Discount', 'Subtotal']],
@@ -182,29 +188,34 @@ const downloadInvoicePDF = () => {
       `$${Number(item.discount || 0).toFixed(2)}`,
       `$${(item.salePrice * item.units - (item.discount || 0)).toFixed(2)}`
     ]),
-    headStyles: {
-      fillColor: [45, 74, 90],
-      textColor: 255,
-      fontStyle: 'bold'
-    },
-    alternateRowStyles: {
-      fillColor: [245, 255, 250]
-    },
+    headStyles: { fillColor: [45, 74, 90], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [245, 255, 250] },
     styles: { fontSize: 10 }
   })
 
-  // Total
   const finalY = doc.lastAutoTable.finalY + 10
   doc.setFontSize(13)
   doc.setFont(undefined, 'bold')
   doc.setTextColor(33, 49, 65)
   doc.text(`TOTAL: $${Number(inv.total).toFixed(2)}`, 14, finalY)
 
-  // Footer
+  if (inv.paymentType === 'PARTIAL') {
+    doc.setFontSize(10)
+    doc.setFont(undefined, 'normal')
+    doc.setTextColor(200, 100, 0)
+    doc.text(`Paid: $${Number(inv.partialAmount).toFixed(2)}`, 14, finalY + 8)
+    doc.text(`Pending: $${(inv.total - inv.partialAmount).toFixed(2)}`, 14, finalY + 15)
+  } else if (inv.paymentType === 'LATER') {
+    doc.setFontSize(10)
+    doc.setFont(undefined, 'normal')
+    doc.setTextColor(200, 0, 0)
+    doc.text(`PENDING PAYMENT: $${Number(inv.total).toFixed(2)}`, 14, finalY + 8)
+  }
+
   doc.setFontSize(9)
   doc.setFont(undefined, 'normal')
   doc.setTextColor(150)
-  doc.text('Thank you for your purchase!', 14, finalY + 12)
+  doc.text('Thank you for your purchase!', 14, finalY + 25)
 
   doc.save(`invoice-${inv.voucherSerie}-${inv.voucherNumber}.pdf`)
 }
@@ -248,6 +259,7 @@ const triggerToast = (message, type = "success") => {
   toastTimeout = setTimeout(() => { showToast.value = false; }, 3000);
 };
 </script>
+
 <template>
   <div class="space-y-4 lg:space-y-6">
 
@@ -342,17 +354,33 @@ const triggerToast = (message, type = "success") => {
                 <button @click="removeItem(item.productId)" class="text-red-500 text-sm">{{ $t('sales.remove') }}</button>
               </div>
             </div>
-            <div v-if="cart.length === 0" class="text-center text-gray-500">{{ $t('sales.no_products') }}</div>
+            <div v-if="cart.length === 0" class="text-center text-gray-500 text-sm">{{ $t('sales.no_products') }}</div>
           </div>
-          <div class="mt-6 space-y-3">
-            <div class="flex justify-between"><span>{{ $t('sales.subtotal') }}</span><span>${{ formattedTotal }}</span></div>
-            <div class="flex justify-between"><span>{{ $t('sales.tax') }}</span><span>$0.00</span></div>
-            <div class="flex justify-between text-xl font-bold"><span>{{ $t('sales.total') }}</span><span>${{ formattedTotal }}</span></div>
+
+          <div class="mt-6 space-y-2 border-t pt-4">
+            <div class="flex justify-between text-sm"><span>{{ $t('sales.subtotal') }}</span><span>${{ formattedTotal }}</span></div>
+            <div class="flex justify-between text-sm"><span>{{ $t('sales.tax') }}</span><span>$0.00</span></div>
+            <div class="flex justify-between text-lg font-bold"><span>{{ $t('sales.total') }}</span><span>${{ formattedTotal }}</span></div>
           </div>
-          <button @click="completeSale" class="w-full mt-6 py-3 rounded-xl text-white font-semibold"
-            style="background-color:#213141;">
-            {{ $t('sales.complete') }}
-          </button>
+
+          <!-- Botones de pago -->
+          <div class="mt-4 space-y-2">
+            <button @click="completeSale('FULL')"
+              class="w-full py-3 rounded-xl text-white font-semibold text-sm"
+              style="background-color:#213141;">
+              ✅ {{ $t('sales.pay_full') }}
+            </button>
+            <button @click="showPartialModal = true"
+              class="w-full py-3 rounded-xl font-semibold text-sm border-2"
+              style="border-color:#213141; color:#213141;">
+              💰 {{ $t('sales.pay_partial') }}
+            </button>
+            <button @click="completeSale('LATER')"
+              class="w-full py-3 rounded-xl font-semibold text-sm"
+              style="background-color:#aaf7d9; color:#213141;">
+              ⏳ {{ $t('sales.pay_later') }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -363,7 +391,6 @@ const triggerToast = (message, type = "success") => {
         <h2 class="font-semibold text-[#213141]">{{ $t('sales.recent_sales') }}</h2>
       </div>
 
-      <!-- Tabla desktop -->
       <table class="hidden lg:table w-full">
         <thead>
           <tr class="border-b">
@@ -380,7 +407,7 @@ const triggerToast = (message, type = "success") => {
             <td class="px-6 py-4">{{ sale.voucherSerie }}-{{ sale.voucherNumber }}</td>
             <td class="px-6 py-4">{{ sale.customerName }}</td>
             <td class="px-6 py-4">{{ sale.employeeName }}</td>
-            <td class="px-6 py4">${{ sale.total.toFixed(2) }}</td>
+            <td class="px-6 py-4">${{ sale.total.toFixed(2) }}</td>
             <td class="px-6 py-4">{{ sale.saleDate.split('T')[0] }}</td>
             <td class="px-6 py-4">
               <button @click="viewInvoice(sale.id)"
@@ -396,7 +423,6 @@ const triggerToast = (message, type = "success") => {
         </tbody>
       </table>
 
-      <!-- Cards móvil -->
       <div class="lg:hidden divide-y">
         <div v-for="sale in sales" :key="sale.id" class="p-4">
           <div class="flex justify-between items-start mb-1">
@@ -426,7 +452,7 @@ const triggerToast = (message, type = "success") => {
 
   <!-- Cart Modal móvil -->
   <div v-if="showCart" class="fixed inset-0 bg-black/50 flex items-end justify-center z-50 lg:hidden">
-    <div class="bg-white rounded-t-2xl w-full p-6 max-h-[85vh] overflow-y-auto">
+    <div class="bg-white rounded-t-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
       <div class="flex justify-between items-center mb-4">
         <h2 class="text-xl font-semibold text-[#213141]">{{ $t('sales.current_sale') }}</h2>
         <button @click="showCart = false" class="text-2xl">✕</button>
@@ -449,15 +475,73 @@ const triggerToast = (message, type = "success") => {
         </div>
         <div v-if="cart.length === 0" class="text-center text-gray-500 py-4">{{ $t('sales.no_products') }}</div>
       </div>
-      <div class="mt-6 space-y-3">
-        <div class="flex justify-between"><span>{{ $t('sales.subtotal') }}</span><span>${{ formattedTotal }}</span></div>
-        <div class="flex justify-between"><span>{{ $t('sales.tax') }}</span><span>$0.00</span></div>
-        <div class="flex justify-between text-xl font-bold"><span>{{ $t('sales.total') }}</span><span>${{ formattedTotal }}</span></div>
+
+      <div class="mt-6 space-y-2 border-t pt-4">
+        <div class="flex justify-between text-sm"><span>{{ $t('sales.subtotal') }}</span><span>${{ formattedTotal }}</span></div>
+        <div class="flex justify-between text-sm"><span>{{ $t('sales.tax') }}</span><span>$0.00</span></div>
+        <div class="flex justify-between text-lg font-bold"><span>{{ $t('sales.total') }}</span><span>${{ formattedTotal }}</span></div>
       </div>
-      <button @click="completeSale" class="w-full mt-6 py-3 rounded-xl text-white font-semibold"
-        style="background-color:#213141;">
-        {{ $t('sales.complete') }}
-      </button>
+
+      <!-- Botones de pago móvil -->
+      <div class="mt-4 space-y-2">
+        <button @click="completeSale('FULL')"
+          class="w-full py-3 rounded-xl text-white font-semibold text-sm"
+          style="background-color:#213141;">
+          ✅ {{ $t('sales.pay_full') }}
+        </button>
+        <button @click="showPartialModal = true"
+          class="w-full py-3 rounded-xl font-semibold text-sm border-2"
+          style="border-color:#213141; color:#213141;">
+          💰 {{ $t('sales.pay_partial') }}
+        </button>
+        <button @click="completeSale('LATER')"
+          class="w-full py-3 rounded-xl font-semibold text-sm text-white"
+          style="background-color:#f97316;">
+          ⏳ {{ $t('sales.pay_later') }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Partial Payment Modal -->
+  <div v-if="showPartialModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
+    <div class="bg-white rounded-2xl shadow-xl p-5 lg:p-6 w-full max-w-sm">
+      <div class="flex justify-between items-center mb-5">
+        <h2 class="text-xl font-bold text-[#213141]">💰 {{ $t('sales.pay_partial') }}</h2>
+        <button @click="showPartialModal = false" class="text-2xl text-gray-400">✕</button>
+      </div>
+
+      <div class="space-y-4">
+        <div class="bg-gray-50 rounded-xl p-4">
+          <div class="flex justify-between text-sm font-bold">
+            <span>{{ $t('sales.total') }}</span>
+            <span>${{ formattedTotal }}</span>
+          </div>
+        </div>
+
+        <div>
+          <label class="block mb-1 font-medium text-sm">{{ $t('sales.initial_payment') }}</label>
+          <input v-model="partialAmount" type="number" step="0.01" min="0.01"
+            :max="total"
+            class="w-full border rounded-lg px-3 py-2 text-sm"
+            :placeholder="`Max: $${formattedTotal}`" />
+          <p class="text-xs text-gray-400 mt-1">
+            {{ $t('sales.remaining_debt') }}: ${{ Math.max(0, total - Number(partialAmount)).toFixed(2) }}
+          </p>
+        </div>
+      </div>
+
+      <div class="flex gap-3 mt-5">
+        <button @click="showPartialModal = false"
+          class="flex-1 py-2 border rounded-xl text-sm">
+          {{ $t('common.cancel') }}
+        </button>
+        <button @click="completeSale('PARTIAL')"
+          class="flex-1 py-2 rounded-xl text-white text-sm font-medium"
+          style="background-color:#213141">
+          {{ $t('common.confirm') }}
+        </button>
+      </div>
     </div>
   </div>
 
@@ -510,15 +594,37 @@ const triggerToast = (message, type = "success") => {
           </tbody>
         </table>
 
-        <div class="border-t pt-4">
+        <div class="border-t pt-4 space-y-1">
           <div class="flex justify-between text-sm text-gray-500">
-            <span>{{ $t('sales.subtotal') }}</span><span>${{ Number(currentInvoice.total).toFixed(2) }}</span>
+            <span>{{ $t('sales.subtotal') }}</span>
+            <span>${{ Number(currentInvoice.total).toFixed(2) }}</span>
           </div>
-          <div class="flex justify-between text-sm text-gray-500 mt-1">
+          <div class="flex justify-between text-sm text-gray-500">
             <span>{{ $t('sales.tax') }}</span><span>$0.00</span>
           </div>
-          <div class="flex justify-between text-lg font-bold mt-2" style="color:#213141">
-            <span>{{ $t('sales.total') }}</span><span>${{ Number(currentInvoice.total).toFixed(2) }}</span>
+          <div class="flex justify-between text-lg font-bold" style="color:#213141">
+            <span>{{ $t('sales.total') }}</span>
+            <span>${{ Number(currentInvoice.total).toFixed(2) }}</span>
+          </div>
+
+          <!-- Pago parcial info -->
+          <div v-if="currentInvoice.paymentType === 'PARTIAL'" class="mt-3 p-3 bg-orange-50 rounded-xl text-sm">
+            <div class="flex justify-between text-orange-700">
+              <span>{{ $t('sales.initial_payment') }}</span>
+              <span>${{ Number(currentInvoice.partialAmount).toFixed(2) }}</span>
+            </div>
+            <div class="flex justify-between text-red-600 font-bold mt-1">
+              <span>{{ $t('sales.remaining_debt') }}</span>
+              <span>${{ (currentInvoice.total - currentInvoice.partialAmount).toFixed(2) }}</span>
+            </div>
+          </div>
+
+          <!-- Pagar después info -->
+          <div v-if="currentInvoice.paymentType === 'LATER'" class="mt-3 p-3 bg-red-50 rounded-xl text-sm">
+            <div class="flex justify-between text-red-600 font-bold">
+              <span>{{ $t('sales.remaining_debt') }}</span>
+              <span>${{ Number(currentInvoice.total).toFixed(2) }}</span>
+            </div>
           </div>
         </div>
 
@@ -540,6 +646,7 @@ const triggerToast = (message, type = "success") => {
   </div>
 
 </template>
+
 <style scoped>
 .toast-enter-active, .toast-leave-active { transition: all 0.3s ease; }
 .toast-enter-from { opacity: 0; transform: translateX(100%); }
