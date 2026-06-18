@@ -226,13 +226,29 @@ const loadCustomers = async () => {
 };
 
 const loadEmployees = async () => {
-  try { employees.value = (await employeeService.getAll()).data; }
-  catch (e) { triggerToast("Error loading employees", "error"); }
+  try {
+    const response = await employeeService.getAll(); 
+    employees.value = response.data;
+
+    if (employees.value.length === 1) {
+      employeeId.value = employees.value[0].id;
+    }
+  } catch (error) {
+    console.error("Error loading employees:", error);
+  }
 };
 
 const loadVoucherTypes = async () => {
-  try { voucherTypes.value = (await voucherTypeService.getAll()).data; }
-  catch (e) { triggerToast("Error loading voucher types", "error"); }
+  try {
+    const response = await voucherTypeService.getAll(); 
+    voucherTypes.value = response.data;
+
+    if (voucherTypes.value.length === 1) {
+      voucherTypeId.value = voucherTypes.value[0].id;
+    }
+  } catch (error) {
+    console.error("Error loading voucher types:", error);
+  }
 };
 
 const loadSales = async () => {
