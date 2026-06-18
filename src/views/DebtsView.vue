@@ -103,7 +103,6 @@ const formatDate = (date) => {
   })
 }
 
-
 onMounted(() => { loadDebts() })
 </script>
 
