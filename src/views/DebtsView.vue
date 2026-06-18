@@ -48,17 +48,16 @@ const showSuccess = (message) => {
 
 const filteredDebts = computed(() => {
   return debts.value.filter(debt => {
-    // 1. Acceder al nombre o razón social del cliente anidado
-    const customer = debt.customer;
-    const nameToSearch = customer
-      ? (customer.socialReason || `${customer.firstname} ${customer.lastname}`)
-      : '';
-    // 2. Acceder al número de comprobante de la venta (Sale)
-    const invoiceNumber = debt.sale?.voucherNumber || '';
+    // Lee directamente los Strings planos devueltos por tu JSON de la API
+    const customerName = debt.customer || '';
+    const invoiceNumber = debt.voucher || '';
+
     const matchesSearch = !search.value ||
-      nameToSearch.toLowerCase().includes(search.value.toLowerCase()) ||
+      customerName.toLowerCase().includes(search.value.toLowerCase()) ||
       invoiceNumber.toLowerCase().includes(search.value.toLowerCase())
+
     const matchesStatus = statusFilter.value === 'All' || debt.status === statusFilter.value
+    
     return matchesSearch && matchesStatus
   })
 })
@@ -73,19 +72,6 @@ const totalDebts = computed(() => debts.value.length)
 const pendingCount = computed(() => debts.value.filter(d => d.status === 'PENDING').length)
 const partialCount = computed(() => debts.value.filter(d => d.status === 'PARTIAL').length)
 
-const getCustomerName = (debt) => {
-  if (!debt.customer) return '-'
-  return debt.customer.socialReason
-    ? debt.customer.socialReason
-    : `${debt.customer.firstname} ${debt.customer.lastname}`
-}
-
-// Devuelve la serie y número de factura formateados (Ej: A01-12345678)
-const getInvoiceLabel = (debt) => {
-  if (!debt.sale) return '-'
-  return `${debt.sale.voucherSerie}-${debt.sale.voucherNumber}`
-}
-
 const getStatusClass = (status) => {
   if (status === 'PAID') return 'bg-green-100 text-green-700'
   if (status === 'PARTIAL') return 'bg-yellow-100 text-yellow-700'
@@ -94,10 +80,29 @@ const getStatusClass = (status) => {
 
 const formatDate = (date) => {
   if (!date) return '-'
-  return new Date(date).toLocaleDateString('en-US', {
-    year: 'numeric', month: 'short', day: 'numeric'
+  
+  // 1. Si viene en formato YYYY-MM-DD, lo dividimos para evitar problemas de zona horaria
+  if (typeof date === 'string' && date.includes('-')) {
+    const [year, month, day] = date.split('-')
+    // Nota: Los meses en JavaScript van de 0 a 11, por eso restamos 1 al mes
+    return new Date(year, month - 1, day).toLocaleDateString('en-US', {
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric'
+    })
+  }
+
+  // 2. Respaldo estándar por si viene una estructura de fecha completa
+  const parsedDate = new Date(date)
+  if (isNaN(parsedDate.getTime())) return '-'
+  
+  return parsedDate.toLocaleDateString('en-US', {
+    year: 'numeric', 
+    month: 'short', 
+    day: 'numeric'
   })
 }
+
 
 onMounted(() => { loadDebts() })
 </script>

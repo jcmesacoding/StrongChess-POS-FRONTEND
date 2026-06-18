@@ -179,7 +179,7 @@ onMounted(() => { loadUsers() })
             <td class="px-6 py-4">
               <span class="px-3 py-1 rounded-full text-sm"
                 :class="user.enabled ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">
-                {{ user.enabled ? 'Active' : 'Inactive' }}
+                {{ user.enabled ? $t('common.active') : $t('common.inactive') }}
               </span>
             </td>
             <td class="px-6 py-4">
@@ -216,7 +216,7 @@ onMounted(() => { loadUsers() })
             </span>
             <span class="px-2 py-1 rounded-full text-xs block"
               :class="user.enabled ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">
-              {{ user.enabled ? $t('users.active') : $t('users.inactive') }}
+              {{ user.enabled ? $t('common.active') : $t('common.inactive') }}
             </span>
           </div>
         </div>

@@ -95,7 +95,7 @@ onMounted(() => { loadProfile() })
             <p class="text-xs text-gray-400 mb-1">{{ $t('common.status') }}</p>
             <span class="px-2 py-1 rounded-full text-xs"
               :class="user.enabled ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">
-              {{ user.enabled ? $t('profile.active') : $t('profile.inactive') }}
+              {{ user.enabled ? $t('common.active') : $t('common.inactive') }}
             </span>
           </div>
           <div>
