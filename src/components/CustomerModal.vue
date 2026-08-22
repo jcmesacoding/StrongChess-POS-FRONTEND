@@ -31,10 +31,40 @@ watch(() => props.initialData, (data) => {
   }
 }, { immediate: true })
 
+const errorMessage = ref("");
+
 const save = () => {
-  if (!form.value.firstname || form.value.firstname.trim().length < 2) return;
-  if (!form.value.lastname || form.value.lastname.trim().length < 2) return;
-  emit("save", { ...form.value });
+  errorMessage.value = "";
+
+  if (!form.value.firstname || form.value.firstname.trim().length < 3) {
+    errorMessage.value = t('customers.error_firstname');
+    return;
+  }
+  if (!form.value.lastname || form.value.lastname.trim().length < 3) {
+    errorMessage.value = t('customers.error_lastname');
+    return;
+  }
+  if (!form.value.phoneNumber || form.value.phoneNumber.trim().length < 3) {
+    errorMessage.value = t('customers.error_phone');
+    return;
+  }
+
+  // Los campos opcionales vacios se mandan como null (no como "") para no
+  // chocar con las restricciones de unicidad de documentNumber/email cuando
+  // varios clientes se crean sin llenarlos.
+  const optionalFields = [
+    "middlename", "surname", "socialReason", "commercialName",
+    "email", "documentNumber", "address"
+  ];
+
+  const payload = { ...form.value };
+  optionalFields.forEach((field) => {
+    if (!payload[field] || !payload[field].trim()) {
+      payload[field] = null;
+    }
+  });
+
+  emit("save", payload);
 };
 </script>
 
@@ -50,11 +80,11 @@ const save = () => {
       </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <input v-model="form.firstname" :placeholder="$t('customers.first_name')"
+        <input v-model="form.firstname" :placeholder="$t('customers.first_name') + ' *'"
           class="border rounded-lg p-3 text-sm w-full" />
         <input v-model="form.middlename" :placeholder="$t('customers.middle_name')"
           class="border rounded-lg p-3 text-sm w-full" />
-        <input v-model="form.lastname" :placeholder="$t('customers.last_name')"
+        <input v-model="form.lastname" :placeholder="$t('customers.last_name') + ' *'"
           class="border rounded-lg p-3 text-sm w-full" />
         <input v-model="form.surname" :placeholder="$t('customers.surname')"
           class="border rounded-lg p-3 text-sm w-full" />
@@ -64,12 +94,18 @@ const save = () => {
           class="border rounded-lg p-3 text-sm w-full" />
         <input v-model="form.email" :placeholder="$t('customers.email')"
           class="border rounded-lg p-3 text-sm w-full" />
-        <input v-model="form.phoneNumber" :placeholder="$t('customers.phone')"
+        <input v-model="form.phoneNumber" :placeholder="$t('customers.phone') + ' *'"
           class="border rounded-lg p-3 text-sm w-full" />
         <input v-model="form.documentNumber" :placeholder="$t('customers.document')"
           class="border rounded-lg p-3 text-sm w-full" />
         <input v-model="form.address" :placeholder="$t('customers.address')"
           class="border rounded-lg p-3 text-sm w-full sm:col-span-2" />
+      </div>
+
+      <p class="text-xs text-gray-400 mt-2">* {{ $t('customers.required_fields') }}</p>
+
+      <div v-if="errorMessage" class="mt-3 px-4 py-3 rounded-xl bg-red-50 text-red-600 text-sm">
+        {{ errorMessage }}
       </div>
 
       <div class="flex justify-end gap-3 mt-5">

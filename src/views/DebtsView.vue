@@ -56,11 +56,57 @@ const filteredDebts = computed(() => {
       customerName.toLowerCase().includes(search.value.toLowerCase()) ||
       invoiceNumber.toLowerCase().includes(search.value.toLowerCase())
 
-    const matchesStatus = statusFilter.value === 'All' || debt.status === statusFilter.value
-    
-    return matchesSearch && matchesStatus
+    return matchesSearch
   })
 })
+
+// Agrupa las deudas por cliente para no tener que buscarlas una por una:
+// cada cliente aparece una sola vez con el total acumulado, y se puede
+// expandir para ver el detalle de cada deuda individual.
+const groupedDebts = computed(() => {
+  const groups = new Map()
+
+  filteredDebts.value.forEach(debt => {
+    const key = debt.customerId ?? debt.customer
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        customerId: debt.customerId,
+        customerName: debt.customer,
+        total: 0,
+        paid: 0,
+        pending: 0,
+        debts: []
+      })
+    }
+
+    const group = groups.get(key)
+    group.total += Number(debt.total || 0)
+    group.paid += Number(debt.paid || 0)
+    group.pending += Number(debt.pending || 0)
+    group.debts.push(debt)
+  })
+
+  return Array.from(groups.values())
+    .map(group => ({
+      ...group,
+      status: group.pending <= 0 ? 'PAID' : (group.paid > 0 ? 'PARTIAL' : 'PENDING')
+    }))
+    .filter(group => statusFilter.value === 'All' || group.status === statusFilter.value)
+    .sort((a, b) => b.pending - a.pending)
+})
+
+const expandedCustomers = ref(new Set())
+
+const toggleCustomer = (key) => {
+  if (expandedCustomers.value.has(key)) {
+    expandedCustomers.value.delete(key)
+  } else {
+    expandedCustomers.value.add(key)
+  }
+  // Forzar reactividad del Set
+  expandedCustomers.value = new Set(expandedCustomers.value)
+}
 
 const totalPending = computed(() =>
   debts.value
@@ -164,39 +210,73 @@ onMounted(() => { loadDebts() })
       <table class="w-full">
         <thead>
           <tr class="border-b">
+            <th class="text-left px-6 py-4"></th>
             <th class="text-left px-6 py-4">{{ $t('debts.customer') }}</th>
-            <th class="text-left px-6 py-4">{{ $t('debts.invoice') }}</th>
+            <th class="text-left px-6 py-4">{{ $t('debts.debt_count') }}</th>
             <th class="text-left px-6 py-4">{{ $t('debts.total') }}</th>
             <th class="text-left px-6 py-4">{{ $t('debts.paid') }}</th>
             <th class="text-left px-6 py-4">{{ $t('debts.pending') }}</th>
-            <th class="text-left px-6 py-4">{{ $t('debts.due_date') }}</th>
             <th class="text-left px-6 py-4">{{ $t('common.status') }}</th>
-            <th class="text-left px-6 py-4">{{ $t('common.actions') }}</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="debt in filteredDebts" :key="debt.id" class="border-b hover:bg-gray-50">
-            <td class="px-6 py-4">{{ debt.customer }}</td>
-            <td class="px-6 py-4">{{ debt.voucher }}</td>
-            <td class="px-6 py-4">${{ Number(debt.total || 0).toFixed(2) }}</td>
-            <td class="px-6 py-4 text-green-600">${{ Number(debt.paid || 0).toFixed(2) }}</td>
-            <td class="px-6 py-4 text-red-600 font-medium">${{ Number(debt.pending || 0).toFixed(2) }}</td>
-            <td class="px-6 py-4">{{ formatDate(debt.dueDate) }}</td>
-            <td class="px-6 py-4">
-              <span class="px-3 py-1 rounded-full text-sm" :class="getStatusClass(debt.status)">
-                {{ debt.status }}
-              </span>
-            </td>
-            <td class="px-6 py-4">
-              <button v-if="debt.status !== 'PAID'" @click="openPayModal(debt)"
-                class="px-3 py-1 rounded-lg text-white text-sm" style="background-color:#213141">
-                {{ $t('debts.pay') }}
-              </button>
-              <span v-else class="text-gray-400 text-sm">{{ $t('debts.paid_label') }}</span>
-            </td>
-          </tr>
-          <tr v-if="filteredDebts.length === 0">
-            <td colspan="8" class="px-6 py-8 text-center text-gray-400">{{ $t('debts.no_debts') }}</td>
+          <template v-for="group in groupedDebts" :key="group.customerId ?? group.customerName">
+            <tr class="border-b hover:bg-gray-50 cursor-pointer" @click="toggleCustomer(group.customerId ?? group.customerName)">
+              <td class="px-6 py-4 text-gray-400">
+                {{ expandedCustomers.has(group.customerId ?? group.customerName) ? '▾' : '▸' }}
+              </td>
+              <td class="px-6 py-4 font-medium">{{ group.customerName }}</td>
+              <td class="px-6 py-4">{{ group.debts.length }}</td>
+              <td class="px-6 py-4">${{ group.total.toFixed(2) }}</td>
+              <td class="px-6 py-4 text-green-600">${{ group.paid.toFixed(2) }}</td>
+              <td class="px-6 py-4 text-red-600 font-medium">${{ group.pending.toFixed(2) }}</td>
+              <td class="px-6 py-4">
+                <span class="px-3 py-1 rounded-full text-sm" :class="getStatusClass(group.status)">
+                  {{ group.status }}
+                </span>
+              </td>
+            </tr>
+            <tr v-if="expandedCustomers.has(group.customerId ?? group.customerName)" class="bg-gray-50">
+              <td colspan="7" class="px-6 py-3">
+                <table class="w-full">
+                  <thead>
+                    <tr class="text-xs text-gray-400">
+                      <th class="text-left py-2">{{ $t('debts.invoice') }}</th>
+                      <th class="text-left py-2">{{ $t('debts.total') }}</th>
+                      <th class="text-left py-2">{{ $t('debts.paid') }}</th>
+                      <th class="text-left py-2">{{ $t('debts.pending') }}</th>
+                      <th class="text-left py-2">{{ $t('debts.due_date') }}</th>
+                      <th class="text-left py-2">{{ $t('common.status') }}</th>
+                      <th class="text-left py-2">{{ $t('common.actions') }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="debt in group.debts" :key="debt.id" class="border-t">
+                      <td class="py-3">{{ debt.voucher }}</td>
+                      <td class="py-3">${{ Number(debt.total || 0).toFixed(2) }}</td>
+                      <td class="py-3 text-green-600">${{ Number(debt.paid || 0).toFixed(2) }}</td>
+                      <td class="py-3 text-red-600 font-medium">${{ Number(debt.pending || 0).toFixed(2) }}</td>
+                      <td class="py-3">{{ formatDate(debt.dueDate) }}</td>
+                      <td class="py-3">
+                        <span class="px-3 py-1 rounded-full text-xs" :class="getStatusClass(debt.status)">
+                          {{ debt.status }}
+                        </span>
+                      </td>
+                      <td class="py-3">
+                        <button v-if="debt.status !== 'PAID'" @click.stop="openPayModal(debt)"
+                          class="px-3 py-1 rounded-lg text-white text-sm" style="background-color:#213141">
+                          {{ $t('debts.pay') }}
+                        </button>
+                        <span v-else class="text-gray-400 text-sm">{{ $t('debts.paid_label') }}</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </td>
+            </tr>
+          </template>
+          <tr v-if="groupedDebts.length === 0">
+            <td colspan="7" class="px-6 py-8 text-center text-gray-400">{{ $t('debts.no_debts') }}</td>
           </tr>
         </tbody>
 
@@ -208,38 +288,51 @@ onMounted(() => { loadDebts() })
       <div class="px-1 py-2">
         <h2 class="font-semibold text-[#213141]">{{ $t('debts.title') }}</h2>
       </div>
-      <div v-for="debt in filteredDebts" :key="debt.id" class="bg-white rounded-xl shadow-sm p-4">
-        <div class="flex justify-between items-start mb-3">
+      <div v-for="group in groupedDebts" :key="group.customerId ?? group.customerName"
+        class="bg-white rounded-xl shadow-sm p-4">
+        <div class="flex justify-between items-start mb-3" @click="toggleCustomer(group.customerId ?? group.customerName)">
           <div>
-            <p class="font-semibold text-[#213141]">{{ debt.customer }}</p>
-            <p class="text-xs text-gray-500">{{ debt.voucher }}</p>
-            <p class="text-xs text-gray-400 mt-1">{{ $t('debts.due_date') }}: {{ formatDate(debt.dueDate) }}</p>
+            <p class="font-semibold text-[#213141]">{{ group.customerName }}</p>
+            <p class="text-xs text-gray-500">{{ group.debts.length }} {{ $t('debts.debt_count') }}</p>
           </div>
-          <span class="px-2 py-1 rounded-full text-xs" :class="getStatusClass(debt.status)">
-            {{ debt.status }}
+          <span class="px-2 py-1 rounded-full text-xs" :class="getStatusClass(group.status)">
+            {{ group.status }}
           </span>
         </div>
         <div class="grid grid-cols-3 gap-2 text-sm mb-3">
           <div class="text-center">
             <p class="text-xs text-gray-400">{{ $t('debts.total') }}</p>
-            <p class="font-medium">${{ Number(debt.total || 0).toFixed(2) }}</p>
+            <p class="font-medium">${{ group.total.toFixed(2) }}</p>
           </div>
           <div class="text-center">
             <p class="text-xs text-gray-400">{{ $t('debts.paid') }}</p>
-            <p class="font-medium text-green-600">${{ Number(debt.paid || 0).toFixed(2) }}</p>
+            <p class="font-medium text-green-600">${{ group.paid.toFixed(2) }}</p>
           </div>
           <div class="text-center">
             <p class="text-xs text-gray-400">{{ $t('debts.pending') }}</p>
-            <p class="font-medium text-red-600">${{ Number(debt.pending || 0).toFixed(2) }}</p>
+            <p class="font-medium text-red-600">${{ group.pending.toFixed(2) }}</p>
           </div>
         </div>
-        <!-- Botón pagar móvil -->
-        <div v-if="debt.status !== 'PAID'" class="mt-2">
-          <button @click="openPayModal(debt)" class="w-full py-2 rounded-lg text-white text-center text-sm"
-            style="background-color:#213141">
-            {{ $t('debts.pay') }}
-          </button>
+        <button @click="toggleCustomer(group.customerId ?? group.customerName)"
+          class="w-full py-2 rounded-lg border text-center text-sm text-gray-500 mb-2">
+          {{ expandedCustomers.has(group.customerId ?? group.customerName) ? '▾' : '▸' }} {{ $t('debts.view_detail') }}
+        </button>
+        <div v-if="expandedCustomers.has(group.customerId ?? group.customerName)" class="space-y-2 border-t pt-2">
+          <div v-for="debt in group.debts" :key="debt.id" class="flex justify-between items-center text-sm">
+            <div>
+              <p class="font-medium">{{ debt.voucher }}</p>
+              <p class="text-xs text-gray-400">{{ formatDate(debt.dueDate) }} · ${{ Number(debt.pending || 0).toFixed(2) }} {{ $t('debts.remaining') }}</p>
+            </div>
+            <button v-if="debt.status !== 'PAID'" @click="openPayModal(debt)"
+              class="px-3 py-1 rounded-lg text-white text-sm" style="background-color:#213141">
+              {{ $t('debts.pay') }}
+            </button>
+            <span v-else class="text-gray-400 text-sm">{{ $t('debts.paid_label') }}</span>
+          </div>
         </div>
+      </div>
+      <div v-if="groupedDebts.length === 0" class="text-center py-6 text-gray-500 text-sm">
+        {{ $t('debts.no_debts') }}
       </div>
     </div>
 

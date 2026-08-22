@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from "vue";
 import { useI18n } from 'vue-i18n'
 import salesService from "../services/salesService";
+import cashWithdrawalService from "../services/cashWithdrawalService";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
@@ -11,6 +12,40 @@ const { t } = useI18n();
 const sales = ref([]);
 const startDate = ref("");
 const endDate = ref("");
+
+const cashBalance = ref({ totalSales: 0, totalWithdrawals: 0, cashInRegister: 0 });
+const withdrawals = ref([]);
+const showWithdrawModal = ref(false);
+const withdrawAmount = ref(0);
+const withdrawReason = ref("");
+const withdrawError = ref("");
+
+const loadCashData = async () => {
+  try {
+    cashBalance.value = (await cashWithdrawalService.getBalance()).data;
+    withdrawals.value = (await cashWithdrawalService.getAll()).data;
+  } catch (error) {
+    console.error(error);
+  }
+};
+
+const openWithdrawModal = () => {
+  withdrawAmount.value = 0;
+  withdrawReason.value = "";
+  withdrawError.value = "";
+  showWithdrawModal.value = true;
+};
+
+const submitWithdraw = async () => {
+  withdrawError.value = "";
+  try {
+    await cashWithdrawalService.create(withdrawAmount.value, withdrawReason.value);
+    showWithdrawModal.value = false;
+    await loadCashData();
+  } catch (error) {
+    withdrawError.value = error.response?.data?.message || "Error registering withdrawal";
+  }
+};
 
 const loadSales = async () => {
   try {
@@ -110,7 +145,10 @@ const exportExcel = () => {
   XLSX.writeFile(wb, `sales-report-${new Date().toISOString().split('T')[0]}.xlsx`)
 }
 
-onMounted(loadSales);
+onMounted(() => {
+  loadSales();
+  loadCashData();
+});
 </script>
 
 <template>
@@ -164,6 +202,36 @@ onMounted(loadSales);
       <div class="bg-white p-4 lg:p-5 rounded-xl shadow-sm flex sm:block justify-between items-center">
         <p class="text-gray-500 text-sm">{{ $t('reports.average') }}</p>
         <h2 class="text-2xl lg:text-3xl font-bold text-[#213141]">${{ averageSale.toFixed(2) }}</h2>
+      </div>
+    </div>
+
+    <!-- Efectivo en caja -->
+    <div class="bg-white rounded-xl shadow-sm p-4 lg:p-5">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <p class="text-gray-500 text-sm">{{ $t('reports.cash_in_register') }}</p>
+          <h2 class="text-2xl lg:text-3xl font-bold text-[#213141]">${{ Number(cashBalance.cashInRegister).toFixed(2) }}</h2>
+          <p class="text-xs text-gray-400 mt-1">{{ $t('reports.total_withdrawals') }}: ${{ Number(cashBalance.totalWithdrawals).toFixed(2) }}</p>
+        </div>
+        <button @click="openWithdrawModal"
+          class="px-4 py-2 rounded-xl text-white text-sm font-medium transition hover:opacity-90"
+          style="background-color:#213141">
+          {{ $t('reports.withdraw_cash') }}
+        </button>
+      </div>
+
+      <div v-if="withdrawals.length" class="mt-4 border-t pt-3">
+        <p class="text-sm font-semibold text-[#213141] mb-2">{{ $t('reports.withdrawal_history') }}</p>
+        <div class="space-y-2 max-h-40 overflow-y-auto">
+          <div v-for="w in withdrawals" :key="w.id" class="flex justify-between text-sm">
+            <span class="text-gray-500">
+              {{ new Date(w.withdrawalDate).toLocaleString() }}
+              <span v-if="w.reason"> · {{ w.reason }}</span>
+              · {{ $t('reports.withdrawn_by') }}: {{ w.performedBy }}
+            </span>
+            <span class="font-medium text-red-600">-${{ Number(w.amount).toFixed(2) }}</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -221,5 +289,47 @@ onMounted(loadSales);
       </div>
     </div>
 
+  </div>
+
+  <!-- Withdraw Cash Modal -->
+  <div v-if="showWithdrawModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
+    <div class="bg-white rounded-2xl shadow-xl p-5 lg:p-6 w-full max-w-md">
+
+      <div class="flex justify-between items-center mb-5">
+        <h2 class="text-xl font-bold text-[#213141]">{{ $t('reports.withdraw_title') }}</h2>
+        <button @click="showWithdrawModal = false" class="text-2xl text-gray-400 hover:text-gray-600">✕</button>
+      </div>
+
+      <div class="space-y-3 mb-5">
+        <div class="bg-gray-50 rounded-xl p-4 flex justify-between text-sm">
+          <span class="text-gray-500">{{ $t('reports.cash_in_register') }}</span>
+          <span class="font-bold text-[#213141]">${{ Number(cashBalance.cashInRegister).toFixed(2) }}</span>
+        </div>
+
+        <div>
+          <label class="block mb-1 font-medium text-sm">{{ $t('reports.withdraw_amount') }}</label>
+          <input v-model="withdrawAmount" type="number" step="0.01" min="0.01" :max="cashBalance.cashInRegister"
+            class="w-full border rounded-lg px-3 py-2 text-sm" />
+        </div>
+
+        <div>
+          <label class="block mb-1 font-medium text-sm">{{ $t('reports.withdraw_reason') }}</label>
+          <input v-model="withdrawReason" type="text" :placeholder="$t('reports.withdraw_reason_placeholder')"
+            class="w-full border rounded-lg px-3 py-2 text-sm" />
+        </div>
+
+        <div v-if="withdrawError" class="px-4 py-3 rounded-xl bg-red-50 text-red-600 text-sm">
+          {{ withdrawError }}
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-3">
+        <button @click="showWithdrawModal = false" class="px-4 py-2 border rounded-lg text-sm">{{ $t('common.cancel') }}</button>
+        <button @click="submitWithdraw" class="px-4 py-2 rounded-lg text-white text-sm" style="background-color:#213141">
+          {{ $t('reports.withdraw_confirm') }}
+        </button>
+      </div>
+
+    </div>
   </div>
 </template>

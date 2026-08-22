@@ -230,7 +230,13 @@ const loadEmployees = async () => {
     const response = await employeeService.getAll(); 
     employees.value = response.data;
 
-    if (employees.value.length === 1) {
+    const secretaria = employees.value.find(
+      (e) => e.firstname?.toLowerCase() === "secretaria"
+    );
+
+    if (secretaria) {
+      employeeId.value = secretaria.id;
+    } else if (employees.value.length === 1) {
       employeeId.value = employees.value[0].id;
     }
   } catch (error) {
